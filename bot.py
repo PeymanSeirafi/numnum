@@ -321,9 +321,10 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
 
-    text = " ".join(context.args)
-
-    if not text:
+    try:
+        text = update.message.text.split(" ", 1)[1]
+        
+    except IndexError:
         await update.message.reply_text("❗ /announce پیام")
         return
 
@@ -338,6 +339,23 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"📢 ارسال شد به {sent} کاربر")
 
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "📚 دستورات ربات\n\n"
+        "👤 کاربران:\n"
+        "/events - نمایش رویدادهای فعال\n"
+        "/show <id> - نمایش جزئیات یک رویداد\n"
+        "/submit <id> - ارسال پاسخ برای یک رویداد\n\n"
+        "👑 مدیران:\n"
+        "/create عنوان | متن - ساخت رویداد\n"
+        "/end <id> - بستن رویداد\n"
+        "/announce متن - ارسال اطلاعیه\n"
+        "/verify <id> accept|reject - تایید یا رد پاسخ\n"
+        "/submissions - نمایش پاسخ‌های تایید شده\n"
+        "/users - نمایش کاربران\n"
+    )
+
+    await update.message.reply_text(text)
 
 # ---------------- MAIN ----------------
 def main():
@@ -351,6 +369,7 @@ def main():
     app.add_handler(CommandHandler("events", events_list))
     app.add_handler(CommandHandler("submit", submit_start))
     app.add_handler(CommandHandler("show", show_event))
+    app.add_handler(CommandHandler("help", help_command))
 
     # admin
     app.add_handler(CommandHandler("create", create_event))
