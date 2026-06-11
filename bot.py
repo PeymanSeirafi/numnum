@@ -15,7 +15,7 @@ from telegram.ext import (
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 
-ADMINS = {639850653}
+ADMINS = {123456789, 987654321}
 
 def is_admin(user_id: int):
     return user_id in ADMINS
@@ -44,7 +44,8 @@ def uname(user):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users.add(update.effective_chat.id)
     await update.message.reply_text(
-        "✅ شما ثبت شدید. برای مشاهده رویدادها از /events استفاده کنید."
+        "✅ شما ثبت شدید.\n"
+        "📌 برای دیدن رویدادها از /events استفاده کنید."
     )
 
 
@@ -82,7 +83,7 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"🎯 رویداد {eid}\n"
                     f"📌 {title}\n\n"
                     f"{main_text}\n\n"
-                    f"برای پاسخ: /submit {eid}"
+                    f"📩 برای پاسخ: /submit {eid}"
                 )
             )
             sent += 1
@@ -92,20 +93,24 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ رویداد {eid} ارسال شد به {sent} کاربر")
 
 
-# ---------------- EVENTS LIST ----------------
-async def events_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    active = [(eid, e) for eid, e in events.items() if e["active"]]
-
-    if not active:
-        await update.message.reply_text("⛔ هیچ رویداد فعالی وجود ندارد")
+# ---------------- END EVENT ----------------
+async def end_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
         return
 
-    text = "🎯 رویدادهای فعال:\n\n"
+    if not context.args:
+        await update.message.reply_text("❗ /end id")
+        return
 
-    for eid, e in active:
-        text += f"{eid} | {e['title']}\n"
+    eid = int(context.args[0])
 
-    await update.message.reply_text(text)
+    if eid not in events:
+        await update.message.reply_text("❌ رویداد پیدا نشد")
+        return
+
+    events[eid]["active"] = False
+
+    await update.message.reply_text(f"⛔ رویداد {eid} بسته شد")
 
 
 # ---------------- SHOW EVENT ----------------
@@ -129,6 +134,22 @@ async def show_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ---------------- EVENTS LIST ----------------
+async def events_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    active = [(eid, e) for eid, e in events.items() if e["active"]]
+
+    if not active:
+        await update.message.reply_text("⛔ هیچ رویداد فعالی وجود ندارد")
+        return
+
+    text = "🎯 رویدادهای فعال:\n\n"
+
+    for eid, e in active:
+        text += f"{eid} | {e['title']}\n"
+
+    await update.message.reply_text(text)
+
+
 # ---------------- SUBMIT START ----------------
 async def submit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_chat.id
@@ -140,7 +161,7 @@ async def submit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     eid = int(context.args[0])
 
     if eid not in events or not events[eid]["active"]:
-        await update.message.reply_text("❌ این رویداد معتبر نیست یا بسته شده")
+        await update.message.reply_text("❌ این رویداد فعال نیست")
         active_submit_session.pop(uid, None)
         return
 
@@ -149,7 +170,7 @@ async def submit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     e = events[eid]
 
     await update.message.reply_text(
-        f"🎯 وارد رویداد شدید:\n\n"
+        f"🎯 شما وارد رویداد شدید:\n\n"
         f"{e['title']}\n\n"
         f"{e['text']}\n\n"
         f"📌 حالا عکس + توضیح ارسال کنید"
@@ -250,46 +271,49 @@ async def verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ رد شد")
 
 
-# ---------------- SUBMISSIONS LIST ----------------
+# ---------------- SUBMISSIONS ----------------
 async def submissions_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
 
     if not submissions:
-        await update.message.reply_text("هیچ submission ای وجود ندارد")
+        await update.message.reply_text("هیچ ارسال ثبت نشده")
         return
 
-    text = "📊 لیست ارسال‌ها:\n\n"
+    text = "📊 ارسال‌ها:\n\n"
 
     for sid, s in submissions.items():
-        status = s["status"]
-
         emoji = {
             "pending": "🟡",
             "accepted": "🟢",
             "rejected": "🔴"
-        }.get(status, "⚪")
+        }.get(s["status"], "⚪")
 
         text += (
             f"ID: {sid} {emoji}\n"
             f"👤 {s['username']}\n"
-            f"🎯 Event: {s['event_id']}\n"
+            f"🎯 {s['event_id']}\n"
             f"📝 {s['caption']}\n"
-            f"Status: {status}\n\n"
+            f"Status: {s['status']}\n\n"
         )
 
     await update.message.reply_text(text)
 
 
-# ---------------- USERS LIST ----------------
+# ---------------- USERS ----------------
 async def users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
 
-    text = f"👥 Users: {len(users)}\n\n"
+    text = f"👥 کاربران ({len(users)}):\n\n"
 
-    for u in list(users)[:30]:
-        text += f"{u}\n"
+    for u in list(users)[:50]:
+        try:
+            chat = await context.bot.get_chat(u)
+            name = f"@{chat.username}" if chat.username else chat.first_name
+            text += f"{name}\n"
+        except:
+            continue
 
     await update.message.reply_text(text)
 
@@ -302,7 +326,7 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = " ".join(context.args)
 
     if not text:
-        await update.message.reply_text("❗ /announce message")
+        await update.message.reply_text("❗ /announce پیام")
         return
 
     sent = 0
@@ -317,7 +341,7 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"📢 ارسال شد به {sent} کاربر")
 
 
-# ---------------- RUN ----------------
+# ---------------- MAIN ----------------
 def main():
     if not TOKEN:
         raise ValueError("BOT_TOKEN missing")
@@ -332,6 +356,7 @@ def main():
 
     # admin
     app.add_handler(CommandHandler("create", create_event))
+    app.add_handler(CommandHandler("end", end_event))
     app.add_handler(CommandHandler("verify", verify))
     app.add_handler(CommandHandler("submissions", submissions_list))
     app.add_handler(CommandHandler("users", users_list))
