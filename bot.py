@@ -15,14 +15,20 @@ from telegram.ext import (
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 
-ADMIN_ID = 639850653
+# 👑 MULTI ADMINS
+ADMINS = {639850653}
 
-# ---------------- DATA ----------------
+def is_admin(user_id: int):
+    return user_id in ADMINS
+
+# ---------------- DATA STORAGE ----------------
 users = set()
+
 events = {}
 event_counter = 1
 
 message_event_map = {}
+
 submissions = {}
 sub_counter = 1
 
@@ -33,10 +39,7 @@ logging.basicConfig(level=logging.INFO)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users.add(update.effective_chat.id)
     await update.message.reply_text(
-        "سلام 👋\n"
-        "به HOI Bet خوش اومدی\n"
-        "اینجا روی چیز های مختلف شرط بندی میکنیم\n"
-        "الان که بات رو start کردی، هر event جدیدی باشه که روش شرط بندی کنیم، از همینجا برات ارسال میشه"
+        "✅ شما ثبت شدید. از این پس رویدادها و اطلاعیه‌ها را دریافت می‌کنید."
     )
 
 
@@ -44,7 +47,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global event_counter
 
-    if update.effective_user.id != ADMIN_ID:
+    if not is_admin(update.effective_user.id):
         return
 
     text = " ".join(context.args)
@@ -63,19 +66,19 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             msg = await context.bot.send_message(
                 chat_id=user_id,
-                text=f"🎯 رویداد {event_id}\n\n{text}\n\n📌 لطفاً پاسخ را با عکس و توضیح ارسال کنید."
+                text=f"🎯 رویداد {event_id}\n\n{text}\n\n📌 پاسخ خود را با عکس + توضیح ارسال کنید."
             )
             message_event_map[(user_id, msg.message_id)] = event_id
             sent += 1
         except:
             pass
 
-    await update.message.reply_text(f"✅ رویداد ساخته شد (ID: {event_id}) برای {sent} کاربر ارسال شد.")
+    await update.message.reply_text(f"✅ رویداد {event_id} ارسال شد به {sent} کاربر.")
 
 
 # ---------------- END EVENT ----------------
 async def end_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    if not is_admin(update.effective_user.id):
         return
 
     if not context.args:
@@ -88,12 +91,12 @@ async def end_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
         events[event_id]["active"] = False
         await update.message.reply_text(f"⛔ رویداد {event_id} بسته شد.")
     else:
-        await update.message.reply_text("❌ رویداد پیدا نشد.")
+        await update.message.reply_text("❌ پیدا نشد.")
 
 
 # ---------------- ANNOUNCEMENT ----------------
 async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    if not is_admin(update.effective_user.id):
         return
 
     text = " ".join(context.args)
@@ -107,13 +110,13 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 chat_id=user_id,
-                text=f"📢 اطلاعیه جدید\n\n{text}"
+                text=f"📢 اطلاعیه\n\n{text}"
             )
             sent += 1
         except:
             pass
 
-    await update.message.reply_text(f"✅ اطلاعیه برای {sent} کاربر ارسال شد.")
+    await update.message.reply_text(f"📢 ارسال شد به {sent} کاربر")
 
 
 # ---------------- HANDLE SUBMISSIONS ----------------
@@ -157,19 +160,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await msg.reply_text(f"✅ ارسال ثبت شد (ID: {sub_id})")
 
-    await context.bot.send_message(
-        ADMIN_ID,
-        f"📩 ارسال جدید #{sub_id}\n"
-        f"🎯 رویداد: {event_id}\n"
-        f"👤 کاربر: @{user.username}\n"
-        f"📝 توضیح: {msg.caption}\n\n"
-        f"برای بررسی: /verify {sub_id} accept|reject"
-    )
+    # 👇 SEND PHOTO TO ALL ADMINS
+    for admin_id in ADMINS:
+        await context.bot.send_photo(
+            chat_id=admin_id,
+            photo=msg.photo[-1].file_id,
+            caption=
+                f"📩 ارسال جدید #{sub_id}\n"
+                f"🎯 رویداد: {event_id}\n"
+                f"👤 کاربر: @{user.username}\n"
+                f"📝 توضیح: {msg.caption}\n\n"
+                f"/verify {sub_id} accept\n"
+                f"/verify {sub_id} reject"
+        )
 
 
 # ---------------- VERIFY ----------------
 async def verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    if not is_admin(update.effective_user.id):
         return
 
     if len(context.args) < 2:
@@ -177,7 +185,7 @@ async def verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     sub_id = int(context.args[0])
-    decision = context.args[1]
+    decision = context.args[1].lower()
 
     if sub_id not in submissions:
         await update.message.reply_text("❌ پیدا نشد.")
@@ -187,40 +195,88 @@ async def verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if decision == "accept":
         sub["status"] = "accepted"
+
         await context.bot.send_message(
             sub["user_id"],
             f"🎉 ارسال شما برای رویداد {sub['event_id']} تأیید شد."
         )
+
         await update.message.reply_text("✅ تأیید شد.")
 
     elif decision == "reject":
         sub["status"] = "rejected"
+
         await context.bot.send_message(
             sub["user_id"],
             f"❌ ارسال شما برای رویداد {sub['event_id']} رد شد."
         )
+
         await update.message.reply_text("⛔ رد شد.")
 
     else:
         await update.message.reply_text("❗ فقط accept یا reject")
 
 
+# ---------------- ADMIN DATABASE COMMANDS ----------------
+async def list_submissions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    text = "📊 آخرین ارسال‌ها:\n\n"
+
+    for sid, s in list(submissions.items())[-10:]:
+        text += f"ID:{sid} | Event:{s['event_id']} | @{s['username']} | {s['status']}\n"
+
+    await update.message.reply_text(text)
+
+
+async def list_events(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    text = "🎯 رویدادها:\n\n"
+
+    for eid, e in events.items():
+        status = "فعال" if e["active"] else "بسته"
+        text += f"{eid} | {status}\n{e['text']}\n\n"
+
+    await update.message.reply_text(text)
+
+
+async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+
+    text = f"👥 تعداد کاربران: {len(users)}\n\n"
+    text += "\n".join(list(map(str, list(users)[:30])))
+
+    await update.message.reply_text(text)
+
+
 # ---------------- RUN BOT ----------------
 def main():
     if not TOKEN:
-        raise ValueError("BOT_TOKEN is not set in environment variables!")
+        raise ValueError("BOT_TOKEN not set!")
 
     app = Application.builder().token(TOKEN).build()
 
+    # user commands
     app.add_handler(CommandHandler("start", start))
+
+    # admin commands
     app.add_handler(CommandHandler("create", create_event))
     app.add_handler(CommandHandler("end", end_event))
     app.add_handler(CommandHandler("announce", announce))
     app.add_handler(CommandHandler("verify", verify))
 
+    app.add_handler(CommandHandler("submissions", list_submissions))
+    app.add_handler(CommandHandler("eventlist", list_events))
+    app.add_handler(CommandHandler("users", list_users))
+
+    # messages
     app.add_handler(MessageHandler(filters.ALL, handle_message))
 
-    print("🤖 Bot is running...")
+    print("🤖 Bot running...")
     app.run_polling()
 
 
