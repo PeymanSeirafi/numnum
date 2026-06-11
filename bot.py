@@ -1,439 +1,226 @@
 import os
-import sqlite3
-from datetime import datetime, timezone
-from typing import Optional
+import logging
+from dotenv import load_dotenv
 
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
-from telegram.error import Forbidden, TelegramError
+from telegram import Update
 from telegram.ext import (
     Application,
-    CallbackQueryHandler,
     CommandHandler,
-    ContextTypes,
     MessageHandler,
+    ContextTypes,
     filters,
 )
 
-DB_PATH = "bot.db"
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-ADMIN_IDS = {
-    int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()
-}
+# ---------------- LOAD ENV ----------------
+load_dotenv()
+TOKEN = os.getenv("BOT_TOKEN")
 
-# If you want to force captions to be non-empty, leave this as True.
-REQUIRE_CAPTION = True
+ADMIN_ID = 639850653
 
+# ---------------- DATA ----------------
+users = set()
+events = {}
+event_counter = 1
 
-def now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+message_event_map = {}
+submissions = {}
+sub_counter = 1
 
-
-def db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+logging.basicConfig(level=logging.INFO)
 
 
-def init_db() -> None:
-    with db() as conn:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                active INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS questions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                text TEXT NOT NULL,
-                active INTEGER NOT NULL DEFAULT 1,
-                created_by INTEGER NOT NULL,
-                created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS answers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                question_id INTEGER NOT NULL,
-                user_id INTEGER NOT NULL,
-                username TEXT,
-                photo_file_id TEXT NOT NULL,
-                caption TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',
-                created_at TEXT NOT NULL,
-                reviewed_at TEXT,
-                UNIQUE(question_id, user_id),
-                FOREIGN KEY(question_id) REFERENCES questions(id),
-                FOREIGN KEY(user_id) REFERENCES users(user_id)
-            );
-            """
-        )
-
-
-def save_user(update: Update) -> None:
-    user = update.effective_user
-    if not user:
-        return
-
-    with db() as conn:
-        conn.execute(
-            """
-            INSERT INTO users (user_id, username, first_name, active, created_at)
-            VALUES (?, ?, ?, 1, ?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                username=excluded.username,
-                first_name=excluded.first_name,
-                active=1
-            """,
-            (user.id, user.username, user.first_name, now()),
-        )
-
-
-def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
-
-
-def create_question(question_text: str, created_by: int) -> int:
-    with db() as conn:
-        conn.execute("UPDATE questions SET active = 0 WHERE active = 1")
-        cur = conn.execute(
-            """
-            INSERT INTO questions (text, active, created_by, created_at)
-            VALUES (?, 1, ?, ?)
-            """,
-            (question_text, created_by, now()),
-        )
-        return int(cur.lastrowid)
-
-
-def get_active_question() -> Optional[sqlite3.Row]:
-    with db() as conn:
-        return conn.execute(
-            "SELECT * FROM questions WHERE active = 1 ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-
-
-def get_active_users():
-    with db() as conn:
-        return conn.execute("SELECT * FROM users WHERE active = 1").fetchall()
-
-
-def save_submission(
-    question_id: int,
-    user_id: int,
-    username: Optional[str],
-    photo_file_id: str,
-    caption: str,
-) -> int:
-    with db() as conn:
-        existing = conn.execute(
-            """
-            SELECT id, status
-            FROM answers
-            WHERE question_id = ? AND user_id = ?
-            """,
-            (question_id, user_id),
-        ).fetchone()
-
-        if existing and existing["status"] == "accepted":
-            return int(existing["id"])
-
-        if existing:
-            conn.execute(
-                """
-                UPDATE answers
-                SET username = ?, photo_file_id = ?, caption = ?, status = 'pending'
-                WHERE id = ?
-                """,
-                (username, photo_file_id, caption, int(existing["id"])),
-            )
-            return int(existing["id"])
-
-        cur = conn.execute(
-            """
-            INSERT INTO answers (
-                question_id, user_id, username, photo_file_id, caption,
-                status, created_at, reviewed_at
-            )
-            VALUES (?, ?, ?, ?, ?, 'pending', ?, NULL)
-            """,
-            (question_id, user_id, username, photo_file_id, caption, now()),
-        )
-        return int(cur.lastrowid)
-
-
-def set_answer_status(answer_id: int, status: str) -> bool:
-    with db() as conn:
-        cur = conn.execute(
-            """
-            UPDATE answers
-            SET status = ?, reviewed_at = ?
-            WHERE id = ?
-            """,
-            (status, now(), answer_id),
-        )
-        return cur.rowcount > 0
-
-
-def get_answer(answer_id: int) -> Optional[sqlite3.Row]:
-    with db() as conn:
-        return conn.execute(
-            """
-            SELECT a.*, q.text AS question_text, q.id AS question_number
-            FROM answers a
-            JOIN questions q ON q.id = a.question_id
-            WHERE a.id = ?
-            """,
-            (answer_id,),
-        ).fetchone()
-
-
-def list_pending_answers():
-    with db() as conn:
-        return conn.execute(
-            """
-            SELECT
-                a.id AS answer_id,
-                a.caption,
-                a.photo_file_id,
-                a.username,
-                a.user_id,
-                q.id AS question_number,
-                q.text AS question_text
-            FROM answers a
-            JOIN questions q ON q.id = a.question_id
-            WHERE a.status = 'pending'
-            ORDER BY a.id ASC
-            """
-        ).fetchall()
-
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    save_user(update)
+# ---------------- START ----------------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    users.add(update.effective_chat.id)
     await update.message.reply_text(
-        "You are registered.\n"
-        "When there is an active question, send me a photo with a caption.\n"
-        "Admin commands: /newquestion, /pending"
+        "سلام 👋\n"
+        "به HOI Bet خوش اومدی\n"
+        "اینجا روی چیز های مختلف شرط بندی میکنیم\n"
+        "الان که بات رو start کردی، هر event جدیدی باشه که روش شرط بندی کنیم، از همینجا برات ارسال میشه"
     )
 
 
-async def newquestion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.effective_user or not is_admin(update.effective_user.id):
-        await update.message.reply_text("You are not allowed to use this command.")
+# ---------------- CREATE EVENT ----------------
+async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global event_counter
+
+    if update.effective_user.id != ADMIN_ID:
         return
 
-    question_text = " ".join(context.args).strip()
-    if not question_text:
-        await update.message.reply_text("Usage: /newquestion your question here")
+    text = " ".join(context.args)
+    if not text:
+        await update.message.reply_text("❗ استفاده: /create عنوان، سوال")
         return
 
-    save_user(update)
-    question_id = create_question(question_text, update.effective_user.id)
-    users = get_active_users()
+    event_id = event_counter
+    event_counter += 1
+
+    events[event_id] = {"text": text, "active": True}
 
     sent = 0
-    failed = 0
 
-    for user in users:
+    for user_id in users:
         try:
-            await context.bot.send_message(
-                chat_id=user["user_id"],
-                text=(
-                    f"Question #{question_id}:\n{question_text}\n\n"
-                    "Reply with a photo and a caption."
-                ),
+            msg = await context.bot.send_message(
+                chat_id=user_id,
+                text=f"🎯 رویداد {event_id}\n\n{text}\n\n📌 لطفاً پاسخ را با عکس و توضیح ارسال کنید."
             )
+            message_event_map[(user_id, msg.message_id)] = event_id
             sent += 1
-        except Forbidden:
-            failed += 1
-            with db() as conn:
-                conn.execute("UPDATE users SET active = 0 WHERE user_id = ?", (user["user_id"],))
-        except TelegramError:
-            failed += 1
-
-    await update.message.reply_text(
-        f"Question #{question_id} sent to {sent} users. Failed for {failed} users."
-    )
-
-
-async def handle_photo_with_caption(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message or not update.effective_user:
-        return
-
-    save_user(update)
-    question = get_active_question()
-    if not question:
-        await update.message.reply_text("There is no active question right now.")
-        return
-
-    if not update.message.photo:
-        await update.message.reply_text("Please send a photo.")
-        return
-
-    caption = (update.message.caption or "").strip()
-    if REQUIRE_CAPTION and not caption:
-        await update.message.reply_text("Please resend it with a caption.")
-        return
-
-    photo_file_id = update.message.photo[-1].file_id
-    user = update.effective_user
-    username = f"@{user.username}" if user.username else None
-
-    answer_id = save_submission(
-        question_id=int(question["id"]),
-        user_id=user.id,
-        username=username,
-        photo_file_id=photo_file_id,
-        caption=caption,
-    )
-
-    keyboard = InlineKeyboardMarkup(
-        [[
-            InlineKeyboardButton("Accept", callback_data=f"accept:{answer_id}"),
-            InlineKeyboardButton("Reject", callback_data=f"reject:{answer_id}"),
-        ]]
-    )
-
-    review_text = (
-        f"Review #{answer_id}\n"
-        f"Question #{question['id']}: {question['text']}\n"
-        f"User: {username or user.first_name or user.id}\n"
-        f"Caption: {caption or '(no caption)'}"
-    )
-
-    for admin_id in ADMIN_IDS:
-        try:
-            await context.bot.send_photo(chat_id=admin_id, photo=photo_file_id)
-            await context.bot.send_message(
-                chat_id=admin_id,
-                text=review_text,
-                reply_markup=keyboard,
-            )
-        except TelegramError:
+        except:
             pass
 
-    await update.message.reply_text("Received. Waiting for admin approval.")
+    await update.message.reply_text(f"✅ رویداد ساخته شد (ID: {event_id}) برای {sent} کاربر ارسال شد.")
 
 
-async def handle_photo_without_caption(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message or not update.effective_user:
+# ---------------- END EVENT ----------------
+async def end_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
         return
 
-    question = get_active_question()
-    if not question:
-        await update.message.reply_text("There is no active question right now.")
+    if not context.args:
+        await update.message.reply_text("❗ استفاده: /end event_id")
         return
 
-    await update.message.reply_text("Please send the photo again with a caption.")
+    event_id = int(context.args[0])
+
+    if event_id in events:
+        events[event_id]["active"] = False
+        await update.message.reply_text(f"⛔ رویداد {event_id} بسته شد.")
+    else:
+        await update.message.reply_text("❌ رویداد پیدا نشد.")
 
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message or not update.effective_user:
+# ---------------- ANNOUNCEMENT ----------------
+async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
         return
 
-    question = get_active_question()
-    if not question:
+    text = " ".join(context.args)
+    if not text:
+        await update.message.reply_text("❗ استفاده: /announce متن پیام")
         return
 
-    await update.message.reply_text("Please reply with a photo and a caption, not text only.")
+    sent = 0
+
+    for user_id in users:
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"📢 اطلاعیه جدید\n\n{text}"
+            )
+            sent += 1
+        except:
+            pass
+
+    await update.message.reply_text(f"✅ اطلاعیه برای {sent} کاربر ارسال شد.")
 
 
-async def pending(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.effective_user or not is_admin(update.effective_user.id):
+# ---------------- HANDLE SUBMISSIONS ----------------
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global sub_counter
+
+    msg = update.message
+    user = update.effective_user
+
+    users.add(update.effective_chat.id)
+
+    if not msg.reply_to_message:
         return
 
-    rows = list_pending_answers()
-    if not rows:
-        await update.message.reply_text("No pending submissions.")
+    key = (update.effective_chat.id, msg.reply_to_message.message_id)
+
+    if key not in message_event_map:
         return
 
-    lines = []
-    for r in rows[:30]:
-        who = r["username"] or str(r["user_id"])
-        lines.append(
-            f"ID {r['answer_id']} | Q{r['question_number']} | {who} | {r['caption']}"
+    event_id = message_event_map[key]
+
+    if not events.get(event_id, {}).get("active", False):
+        await msg.reply_text("⛔ این رویداد بسته شده است.")
+        return
+
+    if not msg.photo or not msg.caption:
+        await msg.reply_text("❗ لطفاً عکس + توضیح ارسال کنید.")
+        return
+
+    sub_id = sub_counter
+    sub_counter += 1
+
+    submissions[sub_id] = {
+        "user_id": user.id,
+        "username": user.username,
+        "event_id": event_id,
+        "caption": msg.caption,
+        "photo_file_id": msg.photo[-1].file_id,
+        "status": "pending"
+    }
+
+    await msg.reply_text(f"✅ ارسال ثبت شد (ID: {sub_id})")
+
+    await context.bot.send_message(
+        ADMIN_ID,
+        f"📩 ارسال جدید #{sub_id}\n"
+        f"🎯 رویداد: {event_id}\n"
+        f"👤 کاربر: @{user.username}\n"
+        f"📝 توضیح: {msg.caption}\n\n"
+        f"برای بررسی: /verify {sub_id} accept|reject"
+    )
+
+
+# ---------------- VERIFY ----------------
+async def verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    if len(context.args) < 2:
+        await update.message.reply_text("❗ استفاده: /verify id accept|reject")
+        return
+
+    sub_id = int(context.args[0])
+    decision = context.args[1]
+
+    if sub_id not in submissions:
+        await update.message.reply_text("❌ پیدا نشد.")
+        return
+
+    sub = submissions[sub_id]
+
+    if decision == "accept":
+        sub["status"] = "accepted"
+        await context.bot.send_message(
+            sub["user_id"],
+            f"🎉 ارسال شما برای رویداد {sub['event_id']} تأیید شد."
         )
+        await update.message.reply_text("✅ تأیید شد.")
 
-    await update.message.reply_text("\n".join(lines))
+    elif decision == "reject":
+        sub["status"] = "rejected"
+        await context.bot.send_message(
+            sub["user_id"],
+            f"❌ ارسال شما برای رویداد {sub['event_id']} رد شد."
+        )
+        await update.message.reply_text("⛔ رد شد.")
 
-
-async def review_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    if not query or not query.from_user:
-        return
-
-    if not is_admin(query.from_user.id):
-        await query.answer("Not allowed.", show_alert=True)
-        return
-
-    try:
-        action, answer_id_str = query.data.split(":", 1)
-        answer_id = int(answer_id_str)
-    except Exception:
-        await query.answer("Bad callback data.", show_alert=True)
-        return
-
-    row = get_answer(answer_id)
-    if not row:
-        await query.answer("Answer not found.", show_alert=True)
-        return
-
-    if action == "accept":
-        ok = set_answer_status(answer_id, "accepted")
-        if ok:
-            await query.answer("Accepted.")
-            await query.edit_message_reply_markup(reply_markup=None)
-
-            try:
-                await context.bot.send_message(
-                    chat_id=int(row["user_id"]),
-                    text="Your photo was accepted.",
-                )
-            except TelegramError:
-                pass
-        else:
-            await query.answer("Could not accept.", show_alert=True)
-
-    elif action == "reject":
-        ok = set_answer_status(answer_id, "rejected")
-        if ok:
-            await query.answer("Rejected.")
-            await query.edit_message_reply_markup(reply_markup=None)
-
-            try:
-                await context.bot.send_message(
-                    chat_id=int(row["user_id"]),
-                    text="Your photo was rejected. Please send another one.",
-                )
-            except TelegramError:
-                pass
-        else:
-            await query.answer("Could not reject.", show_alert=True)
+    else:
+        await update.message.reply_text("❗ فقط accept یا reject")
 
 
-def main() -> None:
-    if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN is missing")
-    if not ADMIN_IDS:
-        raise RuntimeError("ADMIN_IDS is missing")
+# ---------------- RUN BOT ----------------
+def main():
+    if not TOKEN:
+        raise ValueError("BOT_TOKEN is not set in environment variables!")
 
-    init_db()
+    app = Application.builder().token(TOKEN).build()
 
-    app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("newquestion", newquestion))
-    app.add_handler(CommandHandler("pending", pending))
-    app.add_handler(CallbackQueryHandler(review_action, pattern=r"^(accept|reject):"))
-    app.add_handler(MessageHandler(filters.PHOTO & filters.CAPTION, handle_photo_with_caption))
-    app.add_handler(MessageHandler(filters.PHOTO & ~filters.CAPTION, handle_photo_without_caption))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(CommandHandler("create", create_event))
+    app.add_handler(CommandHandler("end", end_event))
+    app.add_handler(CommandHandler("announce", announce))
+    app.add_handler(CommandHandler("verify", verify))
 
+    app.add_handler(MessageHandler(filters.ALL, handle_message))
+
+    print("🤖 Bot is running...")
     app.run_polling()
 
 
