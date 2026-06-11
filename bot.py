@@ -56,7 +56,7 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
 
-    raw = " ".join(context.args)
+    raw = update.message.text.split(" ", 1)[1]
 
     if "|" not in raw:
         await update.message.reply_text("❗ استفاده: /create عنوان | متن اصلی")
@@ -276,29 +276,27 @@ async def submissions_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         return
 
-    if not submissions:
-        await update.message.reply_text("هیچ ارسال ثبت نشده")
+    accepted = [
+        (sid, s)
+        for sid, s in submissions.items()
+        if s["status"] == "accepted"
+    ]
+
+    if not accepted:
+        await update.message.reply_text("هیچ ارسال تأییدشده‌ای وجود ندارد.")
         return
 
-    text = "📊 ارسال‌ها:\n\n"
+    text = "✅ ارسال‌های تأییدشده:\n\n"
 
-    for sid, s in submissions.items():
-        emoji = {
-            "pending": "🟡",
-            "accepted": "🟢",
-            "rejected": "🔴"
-        }.get(s["status"], "⚪")
-
+    for sid, s in accepted:
         text += (
-            f"ID: {sid} {emoji}\n"
+            f"ID: {sid}\n"
             f"👤 {s['username']}\n"
-            f"🎯 {s['event_id']}\n"
-            f"📝 {s['caption']}\n"
-            f"Status: {s['status']}\n\n"
+            f"🎯 رویداد: {s['event_id']}\n"
+            f"📝 پاسخ: {s['caption']}\n\n"
         )
 
     await update.message.reply_text(text)
-
 
 # ---------------- USERS ----------------
 async def users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
