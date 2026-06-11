@@ -15,7 +15,7 @@ from telegram.ext import (
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 
-ADMINS = {123456789, 987654321}
+ADMINS = {639850653}
 
 def is_admin(user_id: int):
     return user_id in ADMINS
