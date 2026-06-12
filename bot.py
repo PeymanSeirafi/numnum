@@ -44,8 +44,12 @@ def uname(user):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users.add(update.effective_chat.id)
     await update.message.reply_text(
-        "✅ شما ثبت شدید.\n"
-        "📌 برای دیدن رویدادها از /events استفاده کنید."
+        "سلام 👋\n"
+        "به HOI Bet خوش اومدی\n"
+        "اینجا روی چیز های مختلف شرط بندی میکنیم\n"
+        "الان که بات رو start کردی هر event جدیدی ساخته بشه بهت اطلاع داده میشه\n"
+        "با دستور /events میتونه شرط بندی های در حال برگزاری رو ببینی\n"
+        "با دستور /help دستور عمل کامل شرکت تو شرط بندی هارو ببین"
     )
 
 
@@ -59,7 +63,7 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw = update.message.text.split(" ", 1)[1]
 
     if "|" not in raw:
-        await update.message.reply_text("❗ استفاده: /create عنوان | متن اصلی")
+        await update.message.reply_text("❗ روش استفاده : /create تایتل | متن اصلی")
         return
 
     title, main_text = map(str.strip, raw.split("|", 1))
@@ -80,17 +84,16 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=user_id,
                 text=(
-                    f"🎯 رویداد {eid}\n"
+                    f"🎯 رویداد شماره {eid}\n"
                     f"📌 {title}\n\n"
                     f"{main_text}\n\n"
-                    f"📩 برای پاسخ: /submit {eid}"
                 )
             )
             sent += 1
         except:
             pass
 
-    await update.message.reply_text(f"✅ رویداد {eid} ارسال شد به {sent} کاربر")
+    await update.message.reply_text(f"رویداد {eid} به {sent} کاربر ارسال شد ✅")
 
 
 # ---------------- END EVENT ----------------
@@ -171,9 +174,9 @@ async def submit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         f"🎯 شما وارد رویداد شدید:\n\n"
-        f"{e['title']}\n\n"
+        f"📌 {e['title']}\n\n"
         f"{e['text']}\n\n"
-        f"📌 حالا عکس + توضیح ارسال کنید"
+        f"⭕ حالا فیش واریز + جواب خود را ارسال کنید"
     )
 
 
@@ -198,7 +201,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not msg.photo or not msg.caption:
-        await msg.reply_text("❗ عکس + توضیح لازم است")
+        await msg.reply_text("❗ عکس با کپشن جواب لازم است")
         return
 
     sid = sub_counter
@@ -215,7 +218,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     active_submit_session.pop(uid, None)
 
-    await msg.reply_text("✅ ارسال ثبت شد")
+    await msg.reply_text("ارسال ثبت شد. منتظر بررسی بمانید 🟡")
 
     for admin in ADMINS:
         await context.bot.send_photo(
@@ -290,7 +293,6 @@ async def submissions_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for sid, s in accepted:
         text += (
-            f"ID: {sid}\n"
             f"👤 {s['username']}\n"
             f"🎯 رویداد: {s['event_id']}\n"
             f"📝 پاسخ: {s['caption']}\n\n"
@@ -323,7 +325,7 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         text = update.message.text.split(" ", 1)[1]
-        
+
     except IndexError:
         await update.message.reply_text("❗ /announce پیام")
         return
@@ -341,18 +343,23 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
-        "📚 دستورات ربات\n\n"
-        "👤 کاربران:\n"
-        "/events - نمایش رویدادهای فعال\n"
-        "/show <id> - نمایش جزئیات یک رویداد\n"
-        "/submit <id> - ارسال پاسخ برای یک رویداد\n\n"
-        "👑 مدیران:\n"
-        "/create عنوان | متن - ساخت رویداد\n"
-        "/end <id> - بستن رویداد\n"
-        "/announce متن - ارسال اطلاعیه\n"
-        "/verify <id> accept|reject - تایید یا رد پاسخ\n"
-        "/submissions - نمایش پاسخ‌های تایید شده\n"
-        "/users - نمایش کاربران\n"
+        "📚 دستورات ربات:\n\n"
+        "/events\n\n"
+        "با این دستور میتوانید لیستی از تمام رویداد های در حال برگزاری را ببینید.\n"
+        "در کنار تایتل رویداد، id آن نوشته شده است.\n\n"
+        "/show <id>\n\n"
+        "با این دستور میتونید متن کامل رویداد با یک id مشخص رو ببینید\n\n"
+        "/submit <id>\n\n"
+        "هر وقت خواستین برای رویداد خاصی شرط بندی کنید، از این دستور استفاده کنید\n"
+        "بعد از استفاده ازین دستور به شما متن اون رویداد رو دوباره نشون میده\n"
+        "در پیام بعدی خود باید یه عکس که فیش واریزی شماس و در کپشن جواب خودتون برای اون شرط بندی رو بنویسید\n"
+        "پاسخ شما برای بررسی شدن، ارسال میشود\n"
+        "در صورت تایید یا رد شدن ارسال شما، به شما اطلاع داده میشود\n\n"
+        "⭕ سیستم شرط بندی:\n\n"
+        "یک سری از ایونت ها ضریب های مخصوص خودشون رو دارند که درون خود پیام ایونت توضیحاتشون داده میشه.\n\n"
+        "در غیر اون صورت اگر توضیحات اضافه ای داده نشده بود، شرط بندی به این صورت انجام میشود که کل پول های جمع شده بین نفراتی که جواب درست دادن تقسیم میشود. (مثلا اگر ۵۰۰ هزارتومن جمع شده باشه و ۲ نفر جواب درست داده باشند، هر کدام ۲۵۰ تومن میگیرند)\n\n"
+        "در صورتی که هیچکدام از شرکت کننده ها جواب درست نداده باشند، پول به تمام شرکت کننده ها برمیگردد\n\n"
+        "🟡 در اخر اگر نکته ای / مشکلی / پیشنهادی بود حتما با @Peyman_Srf در میون بگذارید."
     )
 
     await update.message.reply_text(text)
